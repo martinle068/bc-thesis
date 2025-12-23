@@ -1,0 +1,190 @@
+\chapter{Uživatelská aplikace}
+
+\lstset{
+    frame=single,
+    breaklines=true,
+    basicstyle=\ttfamily\small
+}
+
+Abychom ilustrovali, že Kodemorph funguje správně, je v rámci této práce, pro testovací účely, poskytnuta demo uživatelská aplikace. Aplikace využívá Svelte, FastAPI a MongoDB a lze sloužit jako referenční řešení. Aby byl uživatel schopen vytvořit vlastní aplikaci, která je kompatibilní s nástrojem Kodemorph, musí znát omezení programu a dodržovat následující zásady.
+
+\section{Předpoklady a požadavky prostředí}
+
+\begin{itemize}
+    \item \textbf{Docker Desktop} -- musí být nainstalován a spuštěný
+    \item \textbf{Git} -- pro klonování repozitáře a zobrazení změn po aplikování Kodemorph transformací
+    \item \textbf{Node.js} (verze 24+)
+    \item \textbf{Libovolný jazyk pro backend} 
+    \item \textbf{MongoDB} (pro MongoDB režim)
+\end{itemize}
+
+\section{Konfigurace}
+
+\subsection{Konfigurační soubor (kodemorph.config.json)}
+
+Soubor musí existovat v kořenové složce projektu a uživatel musí specifikovat cestu obsahující zdrojový kód aplikace. Kodemorph automaticky najde všechny \texttt{.svelte} soubory v zadaném adresáři a jeho podadresářích.
+
+\begin{lstlisting}[caption=Konfigurace Kodemorph]
+{
+    "svelteDirectory": "src/components"
+}
+\end{lstlisting}
+
+\subsection{Proměnné prostředí (.env soubor)}
+
+Pro MongoDB režim je třeba vytvořit \texttt{.env} soubor s informacemi pro připojení k databázi:
+
+\begin{lstlisting}[language={}, caption=Proměnné prostředí]
+MONGODB_URI=mongodb://localhost:27017
+MONGODB_DATABASE=your_database
+MONGODB_COLLECTION=your_collection
+\end{lstlisting}
+
+\section{Požadavky na Svelte soubory}
+
+\subsection{Povinná anotace datových zdrojů}
+
+\textbf{DŮLEŽITÉ:} Každý Svelte soubor, který má být transformován, MUSÍ obsahovat anotaci \texttt{@kodemorph} u proměnných s daty. Anotace se vkládá jako komentář nad proměnnou.
+
+\textbf{Správně:}
+\begin{lstlisting}[language=HTML, caption=Správné použití anotace, escapeinside={(*@}{@*)}]
+<script>
+    (*@\texttt{// @kodemorph}@*)
+    export let users = [];
+</script>
+
+<div>
+    {#each users as user}
+        <p>{user.username}</p>
+    {/each}
+</div>
+\end{lstlisting}
+
+\textbf{Špatně (nebude fungovat):}
+\begin{lstlisting}[language=HTML, caption=Chybějící anotace, escapeinside={(*@}{@*)}]
+<script>
+    export let users = [];  (*@\texttt{// Chybí @kodemorph}@*)
+</script>
+\end{lstlisting}
+
+\subsection{Vzor kódu, který Kodemorph očekává}
+
+\begin{lstlisting}[language=HTML, caption=Typický vzor Svelte komponenty, escapeinside={(*@}{@*)}]
+<script>
+    (*@\texttt{// @kodemorph}@*)
+    export let users = [];
+</script>
+
+<div>
+    {#each users as user}
+        <div>
+            <p>Name: {user.username}</p>
+            <p>Email: {user.email}</p>
+            <p>Role: {user.role}</p>
+            {#each user.tags as tag}
+                <span>{tag}</span>
+            {/each}
+        </div>
+    {/each}
+</div>
+\end{lstlisting}
+
+\pagebreak
+\section{Datová struktura}
+
+\subsection{MongoDB kolekce}
+Struktura dokumentů v MongoDB musí být konzistentní napříč všemi dokumenty:
+
+\begin{lstlisting}[caption=Příklad MongoDB dokumentu]
+{
+    "_id": "507f1f77bcf86cd799439011",
+    "username": "john_doe",
+    "email": "john@example.com",
+    "role": "admin",
+    "tags": ["active", "premium"]
+}
+\end{lstlisting}
+
+\subsection{Omezení struktury}
+\begin{itemize}
+    \item Nekonsistentní struktura (některé dokumenty mají pole, jiné ne) -- nepodporováno
+    \item Smíšené datové typy v poli (\texttt{["string", 123, \{obj: true\}]}) -- nepodporováno
+    \item Globální identifikátor dokumentu \texttt{\_id} na kořenové úrovni -- požadováno
+\end{itemize}
+
+\section{Požadavky na Backend}
+
+Kodemorph podporuje jakýkoliv backend (FastAPI, Flask, Express, Spring Boot, atd.), pokud splňuje následující požadavky:
+
+\subsection{Práce s raw JSON/BSON}
+Backend musí pracovat přímo s \textbf{raw JSON} nebo \textbf{BSON} strukturami bez vlastních modelů nebo ORM transformací.
+
+\textbf{Správně (raw JSON/BSON):}
+\begin{lstlisting}[language=Python, caption=Správná implementace s raw JSON, escapeinside={(*@}{@*)}]
+@app.get("/api/users")
+async def get_users() -> List[Dict[str, Any]]:
+    users = []
+    cursor = users_collection.find()  (*@\texttt{\# Raw MongoDB query}@*)
+    async for document in cursor:
+        users.append(document)  (*@\texttt{\# Vrací raw document}@*)
+    return users
+
+@app.post("/api/users")
+async def create_user(user_data: Dict[str, Any]):
+    result = await users_collection.insert_one(user_data)
+    return serialize_doc(result)
+\end{lstlisting}
+
+\textbf{Špatně (ORM modely):}
+\begin{lstlisting}[language=Python, caption=Problematická implementace s ORM modelem, escapeinside={(*@}{@*)}]
+(*@\texttt{\# Toto NEBUDE fungovat - použití Pydantic modelu}@*)
+class UserModel(BaseModel):
+    username: str
+    email: str
+    role: str
+
+@app.post("/api/users")
+(*@\texttt{\# Model definuje strukturu}@*)
+async def create_user(user: UserModel):  
+    (*@\texttt{\# Kodemorph nemůže změnit strukturu, je fixní v modelu}@*)
+    ...
+\end{lstlisting}
+
+Toto omezení je nutné z důvodu, že již prosté přejmenování jednoho klíče struktury způsobí nekompatibilitu s ORM modelem. Zbylé transformace by způsobily mnohem závažnejší problémy, které by vyžadovaly dynamickou transformaci backend části aplikace a to Kodemorph neumožňuje. 
+
+\subsection{Žádná transformace při čtení/zápisu}
+Backend \textbf{musí předávat JSON přesně tak, jak je uložen v databázi}. Žádné mapování, konverze ani úpravy struktury při čtení nebo zápisu dat.
+
+\textbf{Zakázáno:}
+\begin{itemize}
+    \item Přejmenování polí při serializaci/deserializaci
+    \item Skrývání nebo filtrování polí
+    \item Automatické konverze typů (např. datum na string)
+\end{itemize}
+Je-li jakákoliv transformace nutná, uživatel musí na základě změny zvážit manuální zásah do struktury dokumentů, tzn. upravit všechny dokumenty v databázi, aby byly konzistentní.
+
+\section{Známá omezení}
+
+\subsection{Transformace ``wrap as list''}
+\begin{itemize}
+    \item MongoDB transformace funguje
+    \item Svelte transformace není implementována
+    \item Po této transformaci je nutná ruční úprava Svelte kódu. Obvykle je nutná enumerace nově vzniklého seznamu a to vyžaduje zásah uživatele.
+\end{itemize}
+
+\section{Vytvoření demo aplikace}
+
+\subsection{Struktura}
+
+\begin{verbatim}
+demo-app/
+  docker-compose.yml
+  init-mongo.js
+  backend/
+    main.py (FastAPI)
+    requirements.txt
+  frontend/
+    src/
+      components/ (Svelte s @kodemorph)
+      pages/
+\end{verbatim}
